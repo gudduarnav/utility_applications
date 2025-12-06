@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-download480p"
+version = "0.1.0"
+description = "Tkinter GUI for downloading YouTube videos with automatic 480p conversion."
+requires-python = ">=3.9"
+dependencies = ["yt-dlp>=2024.2.24"]
+authors = [{ name = "Utility Applications" }]
+readme = "AGENTS.md"
+
+[project.scripts]
+youtube-download480p = "youtube_download480p.app:main"
+youtube-download-mp3 = "youtube_audio_mp3:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["youtube_audio_mp3"]
