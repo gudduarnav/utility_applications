@@ -153,13 +153,20 @@ class YouTubeAudioMp3App(tk.Tk):
             messagebox.showinfo("In Progress", "A download batch is already running.")
             return
 
-        urls = [line.strip() for line in self.url_text.get("1.0", tk.END).splitlines() if line.strip()]
-        if not urls:
-            messagebox.showwarning("Missing URLs", "Provide at least one video URL.")
-            return
+        try:
+            urls = [line.strip() for line in self.url_text.get("1.0", tk.END).splitlines() if line.strip()]
+            if not urls:
+                messagebox.showwarning("Missing URLs", "Provide at least one video URL.")
+                return
 
-        output_dir = Path(self.output_dir.get()).expanduser()
-        output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = Path(self.output_dir.get()).expanduser()
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            ffmpeg_path = ensure_ffmpeg()
+        except Exception as exc:  # pylint: disable=broad-except
+            messagebox.showerror("Unable to start", str(exc))
+            self.append_log(f"Startup error: {exc}")
+            return
 
         self._total_videos = len(urls)
         self._completed = 0
@@ -171,7 +178,7 @@ class YouTubeAudioMp3App(tk.Tk):
 
         self._worker = threading.Thread(
             target=self.run_queue,
-            args=(urls, output_dir, self.bitrate_var.get()),
+            args=(urls, output_dir, self.bitrate_var.get(), ffmpeg_path),
             daemon=True,
         )
         self._worker.start()
@@ -181,19 +188,13 @@ class YouTubeAudioMp3App(tk.Tk):
             self._stop_event.set()
             self.append_log("Stop requested; finishing current item...")
 
-    def run_queue(self, urls: List[str], output_dir: Path, bitrate: str) -> None:
-        try:
-            ffmpeg_path = ensure_ffmpeg()
-        except RuntimeError as exc:
-            self.append_log(str(exc))
-            self.set_status("ffmpeg not found")
-            return
-
+    def run_queue(self, urls: List[str], output_dir: Path, bitrate: str, ffmpeg_path: str) -> None:
         for idx, url in enumerate(urls, start=1):
             if self._stop_event.is_set():
                 break
 
             self.set_status(f"Downloading {idx}/{self._total_videos}")
+            self.append_log(f"Starting download {idx}/{self._total_videos}: {url}")
             try:
                 result = self.download_single(
                     url=url,
@@ -211,6 +212,7 @@ class YouTubeAudioMp3App(tk.Tk):
 
         self.set_status("Idle")
         self.append_log("Queue finished.")
+        self._worker = None
 
     def download_single(
         self,
@@ -221,6 +223,7 @@ class YouTubeAudioMp3App(tk.Tk):
     ) -> Path:
         temp_dir = Path(tempfile.mkdtemp(prefix="ytdlp_mp3_"))
         try:
+            self.append_log(f"Fetching metadata for: {url}")
             info = self.fetch_metadata(url)
             fmt_id, abr = select_audio_format(info)
             if abr:
@@ -320,6 +323,7 @@ class YouTubeAudioMp3App(tk.Tk):
 
     def append_log(self, message: str) -> None:
         def writer() -> None:
+            print(message)
             self.log_box.configure(state=tk.NORMAL)
             self.log_box.insert(tk.END, message + "\n")
             self.log_box.see(tk.END)

@@ -406,7 +406,9 @@ class FormatGUI:
             if mode == "full":
                 self._perform_full_format(device_path)
             else:
+                self._quick_clean_device(device_path)
                 self.set_progress(40)
+            self._reread_partition_table(device_path)
             self._make_filesystem(device_path, fs_choice, label_text)
             self.set_progress(100)
             self.log_message("Format completed successfully.")
@@ -491,6 +493,54 @@ class FormatGUI:
         finally:
             os.close(fd)
         self.log_message("Zero fill completed.")
+
+    def _quick_clean_device(self, device_path: str) -> None:
+        self.log_message("Quick format selected – clearing existing partition table and signatures.")
+        wipefs_path = shutil.which("wipefs")
+        if wipefs_path:
+            try:
+                self._run_command([wipefs_path, "--all", "--force", device_path], fail_ok=False)
+                return
+            except RuntimeError as exc:
+                self.log_message(f"wipefs failed ({exc}); falling back to zeroing the first blocks.")
+        self._zero_initial_region(device_path, 32 * 1024 * 1024)
+
+    def _zero_initial_region(self, device_path: str, bytes_to_zero: int) -> None:
+        chunk_size = 1 * 1024 * 1024
+        zero_chunk = b"\x00" * chunk_size
+        remaining = bytes_to_zero
+        fd = os.open(device_path, os.O_WRONLY)
+        try:
+            while remaining > 0:
+                if self.cancel_requested:
+                    raise OperationCancelled()
+                to_write = zero_chunk if remaining >= chunk_size else zero_chunk[:remaining]
+                os.write(fd, to_write)
+                remaining -= len(to_write)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        self.log_message(f"Cleared the first {self._format_bytes(bytes_to_zero)} of {device_path}.")
+
+    def _reread_partition_table(self, device_path: str) -> None:
+        self.log_message("Refreshing kernel view of the partition table…")
+        blockdev = shutil.which("blockdev")
+        if blockdev:
+            try:
+                self._run_command([blockdev, "--rereadpt", device_path], fail_ok=True)
+                return
+            except RuntimeError as exc:
+                self.log_message(f"blockdev --rereadpt failed ({exc}); trying partprobe.")
+        partprobe = shutil.which("partprobe")
+        if partprobe:
+            try:
+                self._run_command([partprobe, device_path], fail_ok=True)
+                return
+            except RuntimeError as exc:
+                self.log_message(f"partprobe failed ({exc}).")
+        self.log_message(
+            "Unable to refresh partition table automatically; if formatting still fails, re-plug the device."
+        )
 
     def _make_filesystem(self, device_path: str, fs_choice: str, label_text: str) -> None:
         self.log_message(f"Creating {fs_choice.upper()} filesystem…")
